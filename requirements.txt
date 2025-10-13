@@ -1,0 +1,8 @@
+streamlit==1.50.0
+docx2txt==0.9
+bs4==0.0.2
+markdown==3.9
+pypdf==6.1.1
+chromadb==1.1.1
+sentence-transformers==5.1.1
+huggingface_hub==0.35.3
