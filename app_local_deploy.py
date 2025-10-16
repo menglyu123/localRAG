@@ -20,7 +20,7 @@ import huggingface_hub
 
 
 # ------------------- Config -------------------
-API_KEY = os.environ.get(HUGGING_FACE_KEY)
+API_KEY = os.environ.get("HUGGING_FACE_KEY")
 DATA_DIR = pathlib.Path("./data")
 CHROMA_DIR = "./chromaDB"
 COLLECTION = "real_docs"
