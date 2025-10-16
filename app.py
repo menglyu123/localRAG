@@ -1,28 +1,26 @@
 # app.py
 import os
 import pathlib
-from typing import Optional, List
+import typing
+import time
 import datetime as dt
 import streamlit as st
-from dataclasses import dataclass
-from time import time
-from typing import Dict
+import dataclasses
 
 # --- loaders ---
 import docx2txt
-from bs4 import BeautifulSoup
+import bs4
 import markdown as md
-from pypdf import PdfReader
+import pypdf
 
 # --- vector + llm ---
 import chromadb
-from chromadb.config import Settings
-from sentence_transformers import SentenceTransformer
-from huggingface_hub import InferenceClient
+import sentence_transformers
+import huggingface_hub
 
 
 # ------------------- Config -------------------
-API_KEY = os.environ.get("HUGGING_FACE_KEY")
+API_KEY = os.environ.get(HUGGING_FACE_KEY)
 DATA_DIR = pathlib.Path("./data")
 CHROMA_DIR = "./chromaDB"
 COLLECTION = "real_docs"
@@ -38,7 +36,7 @@ SYSTEM_PROMPT = """You are a research scholar. Your job is to come up with a nov
 
 
 # ------------------- Data model -------------------
-@dataclass
+@dataclasses.dataclass
 class RawDoc:
    doc_id: str
    title: str
@@ -52,7 +50,7 @@ def read_text_txt(path: pathlib.Path) -> str:
    return path.read_text(encoding="utf-8", errors="ignore")
 
 def read_text_pdf(path: pathlib.Path) -> str:
-   reader = PdfReader(str(path))
+   reader = pypdf.PdfReader(str(path))
    pages = []
    for p in reader.pages:
        pages.append(p.extract_text() or "")
@@ -62,7 +60,7 @@ def read_text_docx(path: pathlib.Path) -> str:
    return docx2txt.process(str(path)) or ""
 
 def html_to_text(html: str) -> str:
-   soup = BeautifulSoup(html, "html.parser")
+   soup = bs4.BeautifulSoup(html, "html.parser")
    for bad in soup(["script", "style", "noscript"]):
        bad.extract()
    return soup.get_text(separator=" ", strip=True)
@@ -74,7 +72,7 @@ def read_text_md(path: pathlib.Path) -> str:
    html = md.markdown(path.read_text(encoding="utf-8", errors="ignore"))
    return html_to_text(html)
 
-def load_file(path: pathlib.Path) -> Optional[RawDoc]:
+def load_file(path: pathlib.Path) -> typing.Optional[RawDoc]:
    if not path.is_file():
        return None
    ext = path.suffix.lower()
@@ -115,8 +113,8 @@ def load_file(path: pathlib.Path) -> Optional[RawDoc]:
        filetype=ftype,
    )
 
-def walk_data_dir(data_dir: pathlib.Path) -> List[RawDoc]:
-   docs: List[RawDoc] = []
+def walk_data_dir(data_dir: pathlib.Path) -> typing.List[RawDoc]:
+   docs: typing.List[RawDoc] = []
    for p in data_dir.rglob("*"):
        rd = load_file(p)
        if rd:
@@ -124,7 +122,7 @@ def walk_data_dir(data_dir: pathlib.Path) -> List[RawDoc]:
    return docs
 
 # -------------------- Chunk: overlapped chunk ---------------------
-def chunk_text(text: str, max_chars: int, overlap: int) -> List[str]:
+def chunk_text(text: str, max_chars: int, overlap: int) -> typing.List[str]:
    chunks = []
    pre_chunks = text.split("\n\n")
    for t in pre_chunks:
@@ -141,20 +139,20 @@ def chunk_text(text: str, max_chars: int, overlap: int) -> List[str]:
 # ------------------- Embedding + Chroma -------------------
 @st.cache_resource
 def get_embedder():
-   return SentenceTransformer(EMBEDDING_MODEL)
+   return sentence_transformers.SentenceTransformer(EMBEDDING_MODEL)
 
 @st.cache_resource
 def get_collection():
    client = chromadb.PersistentClient(
        path=CHROMA_DIR,
-       settings=Settings(anonymized_telemetry=False),
+       settings=chromadb.config.Settings(anonymized_telemetry=False),
    )
    try:
        return client.get_collection(COLLECTION)
    except Exception:
        return client.create_collection(COLLECTION)
 
-def index_docs(docs: List[RawDoc], embedder, max_chars: int, overlap: int):
+def index_docs(docs: typing.List[RawDoc], embedder, max_chars: int, overlap: int):
    coll = get_collection()
    ids, docs_text, metas = [], [], []
 
@@ -179,7 +177,7 @@ def index_docs(docs: List[RawDoc], embedder, max_chars: int, overlap: int):
    coll.upsert(ids=ids, documents=docs_text, metadatas=metas, embeddings=vecs)
    return len(ids)
 
-def needs_reindex(docs: List[RawDoc]) -> bool:
+def needs_reindex(docs: typing.List[RawDoc]) -> bool:
    """If any file mtime is newer than last index time marker, or marker missing."""
    marker = pathlib.Path(CHROMA_DIR) / ".last_indexed"
    if not marker.exists():
@@ -194,11 +192,11 @@ def needs_reindex(docs: List[RawDoc]) -> bool:
 def touch_index_marker():
    marker = pathlib.Path(CHROMA_DIR) / ".last_indexed"
    marker.parent.mkdir(parents=True, exist_ok=True)
-   marker.write_text(str(time()))
+   marker.write_text(str(time.time()))
 
 
 # ------------------- Retrieval + LLM -------------------
-def retrieve(question: str, embedder, k: int = 5, where: Optional[Dict]=None) -> List[Dict]:
+def retrieve(question: str, embedder, k: int = 5, where: typing.Optional[typing.Dict]=None) -> typing.List[typing.Dict]:
    coll = get_collection()
    qvec = embedder.encode([question], normalize_embeddings=True).tolist()
    res = coll.query(query_embeddings=qvec, n_results=k, where=where)
@@ -215,7 +213,7 @@ def retrieve(question: str, embedder, k: int = 5, where: Optional[Dict]=None) ->
    return out
 
 
-def build_prompt(question: str, hits: List[Dict]) -> str:
+def build_prompt(question: str, hits: typing.List[typing.Dict]) -> str:
    ctx = []
    for h in hits:
        m = h["metadata"]
@@ -243,7 +241,7 @@ def build_prompt(question: str, hits: List[Dict]) -> str:
 #                - Cite (title → file path) after each factual claim.
 def generate(prompt: str, temperature: float = 0.2) -> str:
    try:
-       client = InferenceClient(
+       client = huggingface_hub.InferenceClient(
            provider="nscale",
            api_key=API_KEY,
            )
@@ -281,42 +279,42 @@ st.title("RAG with ChromaDB + QWen 3 (4B)")
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 with st.sidebar:
-   st.header("Settings")
-   top_k = st.slider("Top-K (retrieval)", min_value=1, max_value=10, value=5, step=1)
-   chunk_chars = st.slider("Chunk size (chars)", min_value=300, max_value=3000, value=1200, step=100)
-   chunk_overlap = st.slider("Chunk overlap (chars)", min_value=0, max_value=600, value=150, step=10)
-   filt = st.selectbox("Filter by file type (optional)", options=["", "pdf", "docx", "html", "markdown", "text"])
-   temperature = st.slider("LLM temperature", min_value=0.0, max_value=1.0, value=0.2, step=0.05)
+    st.header("Settings")
+    top_k = st.slider("Top-K (retrieval)", min_value=1, max_value=10, value=5, step=1)
+    chunk_chars = st.slider("Chunk size (chars)", min_value=300, max_value=3000, value=1200, step=100)
+    chunk_overlap = st.slider("Chunk overlap (chars)", min_value=0, max_value=600, value=150, step=10)
+    filt = st.selectbox("Filter by file type (optional)", options=["", "pdf", "docx", "html", "markdown", "text"])
+    temperature = st.slider("LLM temperature", min_value=0.0, max_value=1.0, value=0.2, step=0.05)
 
-   st.markdown("---")
-   reindex_btn = st.button("(Re)Index")
+    st.markdown("---")
+    reindex_btn = st.button("(Re)Index")
 
 
 
 # Upload files
 st.subheader("Upload documents")
 uploaded = st.file_uploader(
-   "Add PDFs, DOCX, HTML, MD, or TXT",
-   type=["pdf", "docx", "html", "htm", "md", "markdown", "txt"],
-   accept_multiple_files=True,
+    "Add PDFs, DOCX, HTML, MD, or TXT",
+    type=["pdf", "docx", "html", "htm", "md", "markdown", "txt"],
+    accept_multiple_files=True,
 )
 if uploaded:
-   for f in uploaded:
-       dest = DATA_DIR / f.name
-       with open(dest, "wb") as out:
-           out.write(f.read())
-   st.success(f"Uploaded {len(uploaded)} file(s) to {DATA_DIR.resolve()}")
+    for f in uploaded:
+        dest = DATA_DIR / f.name
+        with open(dest, "wb") as out:
+            out.write(f.read())
+    st.success(f"Uploaded {len(uploaded)} file(s) to {DATA_DIR.resolve()}")
 
 # List current files
 st.subheader("Current corpus")
 files = sorted([p for p in DATA_DIR.rglob("*") if p.is_file()])
 if files:
-   st.write(f"{len(files)} file(s) in {DATA_DIR}")
-   for p in files[:50]:
-       stat = p.stat()
-       st.caption(f"• {p.name} — {p.suffix[1:].lower()} — {dt.datetime.fromtimestamp(stat.st_mtime)}")
+    st.write(f"{len(files)} file(s) in {DATA_DIR}")
+    for p in files[:50]:
+        stat = p.stat()
+        st.caption(f"• {p.name} — {p.suffix[1:].lower()} — {dt.datetime.fromtimestamp(stat.st_mtime)}")
 else:
-   st.info("No files yet. Upload above or place files in ./data")
+    st.info("No files yet. Upload above or place files in ./data")
 
 # Indexing
 embedder = get_embedder()
@@ -325,46 +323,46 @@ docs = walk_data_dir(DATA_DIR)
 # Auto-index if needed or on button
 auto_needed = needs_reindex(docs)
 if auto_needed:
-   st.info("Index appears stale or missing. Click (Re)Index to build.")
+    st.info("Index appears stale or missing. Click (Re)Index to build.")
 if reindex_btn:
-   if not docs:
-       st.warning("No supported documents found to index.")
-   else:
-       with st.spinner("Indexing… this can take a minute on first run (downloading embedding model)."):
-           n_chunks = index_docs(docs, embedder, max_chars=chunk_chars, overlap=chunk_overlap)
-           touch_index_marker()
-       st.success(f"Indexed {n_chunks} chunk(s) into Chroma at {CHROMA_DIR}")
+    if not docs:
+        st.warning("No supported documents found to index.")
+    else:
+        with st.spinner("Indexing… this can take a minute on first run (downloading embedding model)."):
+            n_chunks = index_docs(docs, embedder, max_chars=chunk_chars, overlap=chunk_overlap)
+            touch_index_marker()
+        st.success(f"Indexed {n_chunks} chunk(s) into Chroma at {CHROMA_DIR}")
 
 st.markdown("---")
 st.header("Ask your corpus")
 q = st.text_input("Question", placeholder="e.g., What are our warranty terms for frames and forks?")
 ask_col1, ask_col2 = st.columns([1, 3])
 with ask_col1:
-   ask_btn = st.button("Ask")
+    ask_btn = st.button("Ask")
 with ask_col2:
-   filt_dict = {"filetype": filt} if filt else None
-   st.caption(f"Filter: {filt_dict if filt_dict else 'None'} • Top-K: {top_k} • Temp: {temperature}")
+    filt_dict = {"filetype": filt} if filt else None
+    st.caption(f"Filter: {filt_dict if filt_dict else 'None'} • Top-K: {top_k} • Temp: {temperature}")
 
 if ask_btn and q.strip():
-   with st.spinner("Retrieving relevant chunks…"):
-       hits = retrieve(q, embedder, k=top_k, where=filt_dict)
-   if not hits:
-       st.warning("No relevant context found. Try re-indexing or broadening your query.")
-       st.stop()
+    with st.spinner("Retrieving relevant chunks…"):
+        hits = retrieve(q, embedder, k=top_k, where=filt_dict)
+    if not hits:
+        st.warning("No relevant context found. Try re-indexing or broadening your query.")
+        st.stop()
 
-   st.subheader("Retrieved chunks")
-   for i, h in enumerate(hits, start=1):
-       m = h["metadata"]
-       with st.expander(f"{i}. {m['title']}  |  {m['filetype']}  |  score={h['score']}", expanded=(i == 1)):
-           st.caption(f"{m['source_path']}  •  last_modified={m['last_modified']}  •  chunk={m['chunk_index']}")
-           st.write(h["text"])
+    st.subheader("Retrieved chunks")
+    for i, h in enumerate(hits, start=1):
+        m = h["metadata"]
+        with st.expander(f"{i}. {m['title']}  |  {m['filetype']}  |  score={h['score']}", expanded=(i == 1)):
+            st.caption(f"{m['source_path']}  •  last_modified={m['last_modified']}  •  chunk={m['chunk_index']}")
+            st.write(h["text"])
 
-   prompt = build_prompt(q, hits)
-   with st.spinner("Generating grounded answer with QWen 3 (4B) …"):
-       answer = generate(prompt, temperature=temperature)
+    prompt = build_prompt(q, hits)
+    with st.spinner("Generating grounded answer with QWen 3 (4B) …"):
+        answer = generate(prompt, temperature=temperature)
 
-   st.subheader("Answer")
-   st.write(answer)
+    st.subheader("Answer")
+    st.write(answer)
   
 
 # if __name__ == "__main__":
